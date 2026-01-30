@@ -24,6 +24,22 @@ class Surface:
         self.isLastSurface = isLastSurface              # true if the surface is the last surface of the radome
         self.isFirstIx = isFirstIx
 
+
+class Ray:
+    def __init__(self, Pki, ski, nki, r_te, t_te, r_tm, t_tm, tandel, n_diel, ray_length, theta_t):
+        self.Pk = Pki
+        self.sk = ski
+        self.nk = nki
+        self.r_te = r_te
+        self.t_te = t_te
+        self.r_tm = r_tm
+        self.t_tm = t_tm
+        self.tandelta = tandel
+        self.n_diel = n_diel
+        self.ray_length = ray_length
+        self.theta_t = theta_t
+
+
 ############################################################################################################
 
 #===========================================================================================================
@@ -104,7 +120,6 @@ def distance(A, B):
 #==========================================================================================================
 
 
-
     # surfaces --> meshed dome surfaces
     # ray_origin --> start point of the ray
     # sk --> vector defining the ray direction
@@ -115,11 +130,16 @@ def distance(A, B):
     # intersected_faces --> list of indexes of each intersected face by a ray
     # next_surf --> next surface to be intersected
 #===========================================================================================================
-def ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, r_te, t_te, r_tm, t_tm, tandel, n_diel):
+def ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, r_te, t_te, r_tm, t_tm, tandel, n_diel, At_tei, Ar_tei, At_tmi, Ar_tmi, num_trans, num_refl):
     lastSurf = surfaces[next_surf].isLastSurface
     isArray = surfaces[next_surf].isArray
-    isFirstIx = idx == 0
-    # isFirstIx = surfaces[next_surf].isFirstIx
+    ray_len_t = 0
+    if idx == 0:
+        isFirstIx = True
+        num_refl = 0
+        num_trans = 0
+    else:
+        isFirstIx = False
     current_surf = surfaces[next_surf].surface
 
     origin = np.array(Pki[-1])
@@ -141,17 +161,17 @@ def ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, 
         
         else:
             next_surf += 1
-            return ray(surfaces, ski, Pki, nki, ray_lengthi,theta_t, id_cell, next_surf, idx, r_te, t_te, r_tm, t_tm, tandel, n_diel)
+            return ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, r_te, t_te, r_tm, t_tm, tandel, n_diel, At_tei, Ar_tei, At_tmi, Ar_tmi, num_trans, num_refl)
             chosen_point = None
             chosen_cell = None
     else:
         next_surf += 1
-        return ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, r_te, t_te, r_tm, t_tm, tandel, n_diel)
+        return ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, r_te, t_te, r_tm, t_tm, tandel, n_diel, At_tei, Ar_tei, At_tmi, Ar_tmi, num_trans, num_refl)
         chosen_point = None
         chosen_cell = None
 
     
-    idx += 1
+    # idx += 1
      # Snell
 
     er_in = surfaces[next_surf].er_in
@@ -162,7 +182,6 @@ def ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, 
     n_out = np.sqrt(er_out*(1-1j*tand_out))  # n_int
     normal = find_normals(chosen_point, chosen_cell, current_surf)
     if isFirstIx: normal = -normal
-
 
 
     Pki.append(chosen_point)
@@ -178,6 +197,7 @@ def ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, 
         t = snell(i, n, n_out, n_in)
         ski.append(t)
         r_tei, t_tei, r_tmi, t_tmi, theta_ti = refl.fresnel_coefficients2(i, n, n_out, n_in, np.abs(np.dot(i, n)) )
+        kc = I.k0*n_in
             
     else:
         t = snell(i, n, n_in, n_out)
@@ -185,21 +205,52 @@ def ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, 
         r_tei, t_tei, r_tmi, t_tmi, theta_ti = refl.fresnel_coefficients2(i, n, n_in, n_out, theta_t[-1])
         tandel.append(surfaces[next_surf].tand_in)
         n_diel.append(np.sqrt(surfaces[next_surf].er_in))    
-
-    r_te.append(r_tei)
+        # kc = I.k0*n_in
+        kc = I.k0*n_diel[0]*np.sqrt(1-complex(0,tandel[0]))
+    r_te.append(r_tei) #s-polarized
     t_te.append(t_tei)
-    r_tm.append(r_tmi)
+    r_tm.append(r_tmi) #p-polarized
     t_tm.append(t_tmi)
-    theta_t = np.append(theta_t, theta_ti)  
+    theta_t = np.append(theta_t, theta_ti) 
+
+    if r_tei == 1:   #first reflection is total reflextion
+        # print('total reflection in ray ' + ', and reflection num. ' + str(idx))
+        return ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, r_te, t_te, r_tm, t_tm, tandel, n_diel, At_tei, Ar_tei, At_tmi, Ar_tmi, num_trans, num_refl)
+
     
+    if idx == 0:
+        Ar_tei = np.append(Ar_tei, r_tei)
+        Ar_tmi = np.append(Ar_tmi, r_tmi)
+
+    elif not lastSurf:                 
+        theta_1 = theta_t[0]
+        # ray_len_t = sum(ray_lengthi[0:-1])     #change it for each iteration add its length, not saving all the ray lengths
+        ray_len_t = sum(ray_lengthi[1:])
+        if n[2] >= 0 :           #for transmission handling, when z-component of normal is positive
+            # if r_tei != 1:
+            num_trans += 1
+            At_tei = np.append(At_tei, (-r_te[0]*r_te[1])**(num_trans-1)*(t_te[0]*t_te[1])*np.exp(-1j * kc * (ray_len_t) *(theta_1)*np.abs(theta_1)))
+            At_tmi = np.append(At_tmi, (-r_tm[0]*r_tm[1])**(num_trans-1)*(t_tm[0]*t_tm[1])*np.exp(-1j * kc * (ray_len_t) *(theta_1)*np.abs(theta_1)))
+            
+        else:
+            num_refl += 1
+            Ar_tei =  np.append(Ar_tei, t_te[0]*t_te[1] * r_te[1] * (-r_te[0]*r_te[1])**(num_refl-1) * np.exp(-1j * kc * (ray_len_t)* (theta_1)*np.abs(theta_1)))
+            Ar_tmi =  np.append(Ar_tmi, t_tm[0]*t_tm[1] * r_tm[1] * (-r_tm[0]*r_tm[1])**(num_refl-1) * np.exp(-1j * kc * (ray_len_t)* (theta_1)*np.abs(theta_1)))
+        if np.abs(Ar_tei[-1]) < I.Ampl_treshold and np.abs(At_tei[-1]) < I.Ampl_treshold and next_surf < len(surfaces)-1: 
+            next_surf += 1
+            # idx = 1
+            ski[-1] = t
+
+    idx += 1
     surfaces[next_surf].isFirstIx = False
-    if idx >+ I.maxRefl: 
+    if np.abs(Ar_tei[-1]) < I.Ampl_treshold and idx == 1: 
         next_surf += 1
-        idx = 1
+        ski[-1] = t
     if lastSurf:
-        return Pki, ski, nki, r_te, t_te, r_tm, t_tm, tandel, n_diel, ray_lengthi, theta_t
+        return Pki, ski, nki, r_te, t_te, r_tm, t_tm, tandel, n_diel, ray_lengthi, theta_t, At_tei, Ar_tei, At_tmi, Ar_tmi
     else:
-        return ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, r_te, t_te, r_tm, t_tm, tandel, n_diel)
+        
+        return ray(surfaces, ski, Pki, nki, ray_lengthi, theta_t, id_cell, next_surf, idx, r_te, t_te, r_tm, t_tm, tandel, n_diel, At_tei, Ar_tei, At_tmi, Ar_tmi, num_trans, num_refl)
 #===========================================================================================================
 
 
@@ -218,23 +269,50 @@ def DRT (ray_origins, Nx, Ny, sk_0, surfaces):
     t_tes = [[] for _ in range(N_rays)] 
     r_tms = [[] for _ in range(N_rays)] 
     t_tms = [[] for _ in range(N_rays)] 
+    At_te = [[] for _ in range(N_rays)]
+    Ar_te = [[] for _ in range(N_rays)]
+    At_tm = [[] for _ in range(N_rays)]
+    Ar_tm = [[] for _ in range(N_rays)]
     theta_ts = [[] for _ in range(N_rays)] 
     tandels = [[] for _ in range(N_rays)] 
     n_diel = [[] for _ in range(N_rays)]
     
-    
+   
 
     for i in range(0, N_rays):
         next_surf = 1
         idx = 0
 
-        if i == 2:
-            print('drt')
-        Pk[i], sk[i], nk[i], r_tes[i], t_tes[i], r_tms[i], t_tms[i], tandels[i], n_diel[i], ray_lengths[i], theta_ts[i]  = \
-        ray(surfaces, sk[i], Pk[i], nk[i], ray_lengths[i], theta_ts[i],  id_cell[i], next_surf, idx, r_tes[i], t_tes[i], r_tms[i], t_tms[i], tandels[i], n_diel[i])
+
+        if i == 8:
+            print(i)
+        Pk[i], sk[i], nk[i], r_tes[i], t_tes[i], r_tms[i], t_tms[i], tandels[i], n_diel[i], ray_lengths[i], theta_ts[i], At_te[i], Ar_te[i], At_tm[i], Ar_tm[i]  = \
+        ray(surfaces, sk[i], Pk[i], nk[i], ray_lengths[i], theta_ts[i],  id_cell[i], next_surf, idx, r_tes[i], t_tes[i], r_tms[i], t_tms[i], tandels[i], n_diel[i], At_te[i], Ar_te[i], At_tm[i], Ar_tm[i], num_trans = 0, num_refl = 0)
 
 
-    return Pk, nk, sk, r_tes, t_tes, r_tms, t_tms, tandels, n_diel, ray_lengths, theta_ts
+
+ 
+
+    valid_idx = [i for i, P in enumerate(Pk) if len(P) > 2]
+    ray_id = valid_idx[:]  # ray_id[i] = índice original del rayo
+
+    Pk          = [Pk[i]          for i in valid_idx]
+    sk          = [sk[i]          for i in valid_idx]
+    nk          = [nk[i]          for i in valid_idx]
+    r_tes       = [r_tes[i]       for i in valid_idx]
+    t_tes       = [t_tes[i]       for i in valid_idx]
+    r_tms       = [r_tms[i]       for i in valid_idx]
+    t_tms       = [t_tms[i]       for i in valid_idx]
+    tandels     = [tandels[i]     for i in valid_idx]
+    n_diel      = [n_diel[i]      for i in valid_idx]
+    ray_lengths = [ray_lengths[i] for i in valid_idx]
+    theta_ts    = [theta_ts[i]    for i in valid_idx]
+    At_te       = [At_te[i]       for i in valid_idx]
+    Ar_te       = [Ar_te[i]       for i in valid_idx]
+    At_tm       = [At_tm[i]       for i in valid_idx]
+    Ar_tm       = [Ar_tm[i]       for i in valid_idx]
+   
+    return ray_id, Pk, nk, sk, r_tes, t_tes, r_tms, t_tms, tandels, n_diel, ray_lengths, theta_ts, At_te, Ar_te, At_tm, Ar_tm
 #===========================================================================================================
 
 
@@ -306,121 +384,7 @@ def shootRays(Nx, Ny, Lx, Ly, typeSrc):
  #===========================================================================================================
     
 
- #===========================================================================================================
-def fibonacci_sphere(n_rays, randomize=False):
-    rnd = 1.
-    if randomize:
-        rnd = np.random.random() * n_rays
-
-    points = []
-    offset = 2.0 / n_rays
-    increment = np.pi * (3.0 - np.sqrt(5))  # ángulo dorado
-
-    for i in range(n_rays):
-        y = ((i * offset) - 1) + (offset / 2)
-        r = np.sqrt(1 - y*y)
-        phi = ((i + rnd) % n_rays) * increment
-        x = np.cos(phi) * r
-        z = np.sin(phi) * r
-        points.append([x, y, z])  # ya está normalizado
-    return np.array(points)
- #===========================================================================================================
 
 
-
-
-
-
-# #===========================================================================================================
-# def polarization(Pk, sk, nk, e_arr):
-#     # e --> unit vector in the e-field direction
-#     # v_perp --> unit vector perpendicular to the incidence plane
-#     # e_perp --> projection of the e-field on v_perp
-#     # v_paral --> unit vector parallel to the incidence plane
-#     # e_paral --> projection of the e-field on v_paral
-#     e = np.zeros([I.nSurfaces+1,np.shape(e_arr)[0],np.shape(e_arr)[1]])
-#     e[0] = e_arr - np.tile(np.diagonal(e_arr@np.transpose(sk[0,:,:])).reshape(-1,1),(1,3))*sk[0,:,:]
-#     e[0] = e[0]/np.tile(np.sqrt(e[0,:,0]**2+e[0,:,1]**2+e[0,:,2]**2).reshape(-1,1), (1,3))
-#     # dot = np.diagonal(e_arr@np.transpose(sk[0,:,:]))
-#     # insk = np.tile(dot.reshape(100,1),(1,3))*sk[0,:,:]
-
-#     T_tot = np.ones(np.shape(e_arr)[0])
-#     for i in range(I.nSurfaces):
-#         # Compute parallel and perpendicular components of the e-field to the incident plane
-#         v_perp = np.cross(nk[i+1,:,:],sk[i+1,:,:])
-#         e_perp = np.tile(np.diagonal(e[i]@np.transpose(v_perp)).reshape(-1,1),(1,3))*v_perp
-#         e_paral = e[i]-e_perp
-#         # Debugging lines
-#         # sum = e_perp+e_paral
-#         # test = np.sqrt(sum[:,0]**2+sum[:,1]**2+sum[:,2]**2)
-#         # Compute Fresnel transmisison coeffs
-#         cos_theta_i = np.diagonal(nk[i+1,:,:]@np.transpose(sk[i,:,:]))
-#         theta_i = np.arccos(cos_theta_i)
-#         sin_theta_t = np.cross(nk[i+1,:,:],sk[i+1,:,:])
-#         sin_theta_t = np.sqrt(sin_theta_t[:,0]**2+sin_theta_t[:,1]**2+sin_theta_t[:,2]**2)
-#         theta_t = np.arcsin(sin_theta_t)
-#         T_perp = (2*cos_theta_i*sin_theta_t)/(np.sin(theta_i+theta_t))
-#         T_paral = (2*cos_theta_i*sin_theta_t)/(np.sin(theta_i+theta_t)*np.cos(theta_i-theta_t))
-#         # Case where incident angle is 0
-#         idxs1 = np.where(theta_i>-1e-3,1,0)
-#         idxs2 = np.where(theta_i<1e-3,1,0)
-#         idxs = np.where(idxs1*idxs2)
-#         T_perp[idxs] = (2*np.sqrt(np.real(I.er[i])))/(np.sqrt(np.real(I.er[i]))+np.sqrt(np.real(I.er[i+1])))
-#         T_paral[idxs] = T_perp[idxs]
-#         # Apply coeffs
-#         e_perp *= np.tile(T_perp.reshape(-1,1), (1,3))
-#         e_paral *= np.tile(T_paral.reshape(-1,1), (1,3))    
-
-#         sum = e_perp+e_paral
-#         T_tot *= np.sqrt(sum[:,0]**2+sum[:,1]**2+sum[:,2]**2)
-
-#         e[i+1] = sum/np.tile(np.sqrt(sum[:,0]**2+sum[:,1]**2+sum[:,2]**2).reshape(-1,1),(1,3))
-
-#     return T_tot, e
-# #===========================================================================================================
-
-
-# def RRT(surfaces, ap_ray_origins, sk0):
-#     # Inputs
-#     direction = 'RRT'
-#     N_sections = I.nSurfaces + 1
-#     N_rays = I.N_rrt
-#     sk = np.zeros([N_sections+1, N_rays, 3])
-#     sk[0,:,:] = np.tile(sk0, (N_rays,1))
-#     Pk = np.zeros([N_sections+1, N_rays, 3])
-#     Pk[0,:,:] = ap_ray_origins.T
-#     nk = np.zeros([N_sections+1, N_rays, 3])
-#     nk[0,:,:] = np.tile(np.array([0,0,1]), (N_rays,1))
-#     ray_lengths = np.zeros([N_rays, N_sections])
-#     phi_ap = np.zeros([N_rays,1])
-#     e_ap = np.zeros([N_rays,3])
-#     intersected_faces = np.zeros([N_rays, N_sections])
-#     next_surf = I.nSurfaces
-#     idx = 0
-
-#     # GO
-#     Pk, sk, nk, ray_lengths, phi_ap, e_ap, idx_intersected_faces = ray(surfaces, direction, sk, Pk, nk, ray_lengths, phi_ap, e_ap, intersected_faces, next_surf, idx)
-#     N_used_rays = np.shape(Pk)[1]
-
-#     # Interpolate poynting vectors
-#     f_inc_vectors = LinearNDInterpolator(Pk[-1][:,0:2], -sk[-2])
-
-#     # Calculate phases
-#     phases_rrt = np.zeros([N_used_rays])
-#     path_length = np.zeros([N_used_rays])
-#     for ii in range(N_sections):
-#         path_length += ray_lengths[:,ii] * np.sqrt(abs(surfaces[N_sections-ii].er1))
-#     phases_rrt =  I.k0 * path_length    
-
-#     # Interpolate phases
-#     f_phases_rrt = LinearNDInterpolator(Pk[-1][:,0:2], phases_rrt)
-
-#     # Plot
-#     # if I.plotRRT:
-#         # plots.plot_rays(surfaces, Pk, N_sections, sk, N_used_rays, direction)
-
-#     return f_inc_vectors, f_phases_rrt, path_length
-
-# #===========================================================================================================
 
 

@@ -17,9 +17,10 @@ def loop_revolution_surf(surf, params, surfaces, ii):
     else: isLastSurf = False
     surf = rt.Surface(surf, er[ii], er[ii+1], False, False, isLastSurf)
     # surfaces.append(surf)
-    
     return surf
+#===========================================================================================================
 
+#===========================================================================================================
 # For parallelization
 def slice_data(data, nprocs):
     aver, res = divmod(len(data), nprocs)
@@ -35,8 +36,9 @@ def slice_data(data, nprocs):
         slices.append(data[count: count+nums[proc]])
         count += nums[proc]
     return slices
+#===========================================================================================================
 
-
+#===========================================================================================================
 def create_surfaces():
     # type_surface, type_surf_n_params, surf_params, nSurfaces, MLthick, er = params
     surfaces = []
@@ -46,11 +48,14 @@ def create_surfaces():
     tand = I.tand
     extra = 1e-3
     extra2 = 1e-3
-    corners_array = np.array([np.array([-(I.Lx/2+extra2),-(I.Ly/2+extra), 0.]),
+    if I.typeSrc == 'pw':
+        corners_array = np.array([np.array([-(I.Lx/2+extra2),-(I.Ly/2+extra), 0.]),
                                 np.array([-(I.Lx/2+extra2),+(I.Ly/2+extra), 0.]),
                                 np.array([+(I.Lx/2+extra2),+(I.Ly/2+extra), 0.]),
                                 np.array([+(I.Lx/2+extra2),-(I.Ly/2+extra), 0.])])
-    surf = create_rectangular_surf(corners_array)
+        surf = create_rectangular_surf(corners_array)
+    else: 
+        surf = surf = create_full_sphere([0, 0, 0], I.Lx)
     surf = rt.Surface(surf, 1., er[0], 0, 0, True, False, False, True)
     surfaces.append(surf)
 
@@ -60,29 +65,25 @@ def create_surfaces():
             case 'cylinder':
                 surf = create_full_cylinder(bodies.r, bodies.h, bodies.center, bodies.ax)
 
-
             case 'box':
                 surf = create_full_box(bodies.center, bodies.ax)
 
             case 'ellipse':
                 surf = create_elliptical_cylinder(bodies.center, [bodies.a, bodies.b, bodies.h])
         
-
         if ii == (nSurfaces-1): isLastSurf = True
         else: isLastSurf = False
-        surf = rt.Surface(surf, er[ii], er[ii+1],  tand[ii], tand[ii+1], False, False, False, True)
+        surf = rt.Surface(surf, er[ii], er[ii+1],  tand[ii], tand[ii+1], False, False, False, False)
         surfaces.append(surf)
 
     
-    surf = create_full_sphere()
-    surf = rt.Surface(surf, 1, 1,  1, 1, False, False, True, True)
+    surf = create_full_sphere([0, 0, 0], I.D)
+    surf = rt.Surface(surf, 1.0, 1.0,  0.0, 0.0, False, False, True, False)
     surfaces.append(surf)
     return surfaces
-
 #===========================================================================================================
 
 #===========================================================================================================
-
 def curve_function(t, type_surf, MLthick, surf_params):
     match type_surf:
         case 'conic':
@@ -156,7 +157,6 @@ def create_full_box(center, axis, rotation_deg = 0):
 
     cx, cy, cz = center
     dx, dy, dz = axis
-
     tag = occ.addBox(cx, cy, cz, dx, dy, dz)
     if rotation_deg != 0:
         center_x = cx + dx / 2
@@ -164,12 +164,10 @@ def create_full_box(center, axis, rotation_deg = 0):
         center_z = cz + dz / 2
         angle_rad = np.radians(rotation_deg)
         occ.rotate([(3, tag)], center_x, center_y, center_z, 0, 0, 1, angle_rad)
-
     occ.synchronize()
 
     gmsh.option.setNumber('Mesh.MeshSizeMin', 0.0001)
     gmsh.option.setNumber('Mesh.MeshSizeMax', 0.001)   
-
     mesh.generate(2)
 
     nodeTags, nodeCoords, _ = model.mesh.getNodes()                         # get the nodes
@@ -224,21 +222,46 @@ def create_elliptical_cylinder(center, axis, mesh_size = I.meshMaxSize):
     return surf
 #===========================================================================================================
 
+#===========================================================================================================
+def fibonacci_sphere_points(n_pts, R, center=(0.0, 0.0, 0.0), randomize=False):
+    # Puntos cuasi-uniformes en la esfera (radio R)
+    GR = (1.0 + np.sqrt(5.0)) / 2.0
+    golden_angle = 2.0 * np.pi * (1.0 - 1.0/GR)
+
+    if randomize:
+        phase = np.random.random() * 2*np.pi
+    else:
+        phase = 0.0
+
+    i = np.arange(n_pts)
+    # mu = cos(theta) uniforme
+    mu = 1.0 - 2.0 * (i + 0.5) / n_pts
+    theta = np.arccos(np.clip(mu, -1.0, 1.0))
+    phi = i * golden_angle + phase
+
+    x = R * np.sin(theta) * np.cos(phi)
+    y = R * np.sin(theta) * np.sin(phi)
+    z = R * np.cos(theta)
+
+    pts = np.column_stack([x, y, z]) + np.array(center)[None, :]
+    return pts
+#===========================================================================================================
 
 
 #===========================================================================================================
-def create_full_sphere():
+def create_full_sphere(center, radius):
     gmsh.initialize()
     model = gmsh.model
     occ   = model.occ
     mesh  = model.mesh
-    cx, cy, cz = [0, 0,0]
+    cx, cy, cz = center
+    R = radius
 
-    occ.addSphere(cx, cy, cz, I.D)
+    occ.addSphere(cx, cy, cz, R)
     occ.synchronize()
 
-    gmsh.option.setNumber('Mesh.MeshSizeMin', 0.001)
-    gmsh.option.setNumber('Mesh.MeshSizeMax', 0.1)   
+    gmsh.option.setNumber('Mesh.MeshSizeMin', R/20)
+    gmsh.option.setNumber('Mesh.MeshSizeMax', R/5)   
     mesh.generate(2)
 
     # Get node coordinates
@@ -356,7 +379,6 @@ def create_revolution_surf(type_surface, MLthick, surf_params):
 #===========================================================================================================
 
 #===========================================================================================================
-
 def create_rectangular_surf(points):
     
     gmsh.initialize()
@@ -413,17 +435,11 @@ def create_rectangular_surf(points):
     faces1 = np.hstack((3*np.ones((F.shape[0],1)),F)).astype(int)
     surf = pv.PolyData(V,faces=faces1) #,n_faces=faces1.shape[0]
 
-    # p = pv.Plotter()
-    # p.add_mesh(surf, show_edges=True, opacity=0.7, lighting=False)
-    # p.show_grid()
-    # p.show()
-
     return surf
 
 #===========================================================================================================
 
 #===========================================================================================================
-
 def aperture_plane_points(angle, L):
     # Corners calculation
     theta_0 = angle[0]
@@ -449,44 +465,7 @@ def aperture_plane_points(angle, L):
     points = extended_B + np.dot(base,meshgrid)
 
     return np.array([B, C, D, E]), points, -v
-
 #===========================================================================================================
 
 
 
-####################################### EXECUTE FOR DEBUGGING ##############################################
-#===========================================================================================================
-
-if __name__ == "__main__":  # ML not implemented
-    
-    if 1: # To plot the mesh using pyvista
-        surf = create_revolution_surf(I.type_surface, I.surfaces_parameters)
-        # surf.plot_normals(mag=0.1, show_mesh=True, flip=True,show_edges=True)
-        p = pv.Plotter()
-        p.add_mesh(surf, show_edges=True)
-        p.show_grid()
-        p.save_graphic(I.newpath_results + '/revolution_surf_mesh.pdf') 
-        p.show()
-        # p = pvqt.BackgroundPlotter()
-        # p.add_mesh(surf, show_edges=True)
-        # p.show_grid()
-        # p.save_graphic(I.newpath_results + '/revolution_surf_mesh.pdf')
-        # p.show()
-        # p.app.exec_()
-
-    
-    if 0: # To plot the mesh using pyvista
-        surf = create_rectangular_surf(I.Lx, I.Ly)
-        p = pv.Plotter()
-        p.add_mesh(surf, show_edges=True)
-        p.show_grid()
-        p.save_graphic(I.newpath_results + '/rectangular_surf_mesh.pdf') 
-        p.show() 
-        # p = pvqt.BackgroundPlotter()
-        # p.add_mesh(surf, show_edges=True)
-        # p.show_grid()
-        # p.save_graphic(I.newpath_results + '/revolution_surf_mesh.pdf')
-        # p.show()
-        # p.app.exec_()
-
- 

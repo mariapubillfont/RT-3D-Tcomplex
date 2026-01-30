@@ -2,20 +2,53 @@ import pyvista as pv
 import numpy as np
 from matplotlib.cm import get_cmap
 import random
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 
-def plotSurfaces(surfaces):
-    p = pv.Plotter()    
-    for i in range(0, len(surfaces)):
-        
-        si = surfaces[i]
-        if i == len(surfaces)-1:    
+#===========================================================================================================
+def plotSurfaces(surfaces, origins, sk0, ray_length=1, rays_as_arrows=False,
+                 ray_color="black", ray_width=2, origin_color="red", origin_size=10):
+    p = pv.Plotter()
+
+    for i, si in enumerate(surfaces):
+        if i == len(surfaces) - 1:
             p.add_mesh(si.surface, show_edges=False, opacity=0.0, color='pink', style='wireframe')
         else:
-            p.add_mesh(si.surface, opacity=0.8, color = True, style='wireframe')
+            p.add_mesh(si.surface, opacity=0.8, color=True, style='wireframe')
+
+    # Plot rays if provided
+    if origins is not None and sk0 is not None:
+        origins = np.asarray(origins, dtype=float)
+        sk0 = np.asarray(sk0, dtype=float)
+
+        # Normalize directions for display (avoid division by zero)
+        norms = np.linalg.norm(sk0, axis=1)
+        valid = norms > 0
+        dirs = np.zeros_like(sk0)
+        dirs[valid] = sk0[valid] / norms[valid, None]
+
+        # Origins as points
+        p.add_points(origins, color=origin_color, point_size=origin_size, render_points_as_spheres=True)
+
+        lines = []
+        for o, d in zip(origins, dirs):
+            if np.allclose(d, 0.0):
+                continue
+            a = o
+            b = o + ray_length * d
+            lines.append(pv.Line(a, b))
+        if lines:
+            rays_mesh = lines[0]
+            for ln in lines[1:]:
+                rays_mesh = rays_mesh.merge(ln)
+            p.add_mesh(rays_mesh, color=ray_color, line_width=ray_width)
+
     p.show()
+#===========================================================================================================
 
-
+#===========================================================================================================
 def plot_axes(plotter, origen):
     # plotter = pv.Plotter()
     # origen = np.array([0, 0, 0])
@@ -33,10 +66,10 @@ def plot_axes(plotter, origen):
     plotter.add_point_labels([origen + eje_y], ['Y'], point_size=0, font_size=12, text_color='green')
     plotter.add_point_labels([origen + eje_z], ['Z'], point_size=0, font_size=12, text_color='blue')
 
-    # plotter.show()
+ #===========================================================================================================
 
-
-def plotDRT(surfaces, Pk, sk, show_ray_ids=True, show_dirs=False, dir_scale=0.04, show_all = False):
+#===========================================================================================================
+def plotDRT(surfaces, Pk, sk, show_ray_ids=True, show_dirs=False, dir_scale=0.04, show_all = True):
     plotter = pv.Plotter()
     cmap = get_cmap("viridis")
     
@@ -49,7 +82,7 @@ def plotDRT(surfaces, Pk, sk, show_ray_ids=True, show_dirs=False, dir_scale=0.04
             color = 'lightblue'
         surf = surfaces[i]
         mesh = surf.surface
-        plotter.add_mesh(mesh, color=color, opacity=0.5, show_edges=True, edge_color='#155DFC')
+        plotter.add_mesh(mesh, color=color, opacity=0.5, show_edges=False, edge_color='#155DFC')
 
     
     ray_origins = []
@@ -71,7 +104,7 @@ def plotDRT(surfaces, Pk, sk, show_ray_ids=True, show_dirs=False, dir_scale=0.04
 
             for i in range(n_points - 1):
                 segment = np.array([ray_path[i], ray_path[i+1]])
-                plotter.add_lines(segment, color=ray_color, width=3)
+                plotter.add_lines(segment, color=ray_color, width=2)
             # for pt in ray_path:
             #     plotter.add_mesh(pv.Sphere(radius=0.0001, center=pt), color=point_color)
             
@@ -93,11 +126,11 @@ def plotDRT(surfaces, Pk, sk, show_ray_ids=True, show_dirs=False, dir_scale=0.04
     plotter.add_title("Direct RT", font_size=14)
     plot_axes(plotter, np.array([0, 0.2, 0]))
     plotter.show()
+#===========================================================================================================
 
 
 
-
-
+#===========================================================================================================
 def plot_normals(surfaces, nk, Pk):
     
     plotter = pv.Plotter()
@@ -106,18 +139,11 @@ def plot_normals(surfaces, nk, Pk):
         mesh = surfaces[i].surface
         plotter.add_mesh(mesh, opacity=0.4, color='lightgray', show_edges=False)
 
-
         if not mesh.point_data.get("Normals"):
                     mesh.compute_normals(point_normals=True, inplace=True)
 
         normals = mesh.point_normals
         points = mesh.points
-
-        # Plot surface node normals in red
-        # pc = pv.PolyData(points)
-        # pc['normals'] = normals
-        # arrows = pc.glyph(orient='normals', scale=True, factor=0.01)
-        # plotter.add_mesh(arrows, color='red')
 
     # 2. Plot normals for each ray, excluding first and last points
     for i in range(len(Pk)):
@@ -141,3 +167,173 @@ def plot_normals(surfaces, nk, Pk):
         plotter.add_mesh(arrows, color='blue')
 
     plotter.show()
+#===========================================================================================================
+
+#===========================================================================================================
+def plot_ray_tubes(
+        ray_origins,        # Pk_src : (Nrays, 3)
+        ray_dirs,           # sk_src : (Nrays, 3)
+        Pk_ap,              # (Nrays, 3)
+        triangles,          # (Ntri, 3)
+        surfaces,
+        max_ray_length=None,
+        ray_sample_step=0.1,
+        show_source=True,
+        show_aperture=True,
+):
+    import numpy as np
+    import pyvista as pv
+
+    Nrays = ray_origins.shape[0]
+    plotter = pv.Plotter()
+
+    # ------------------------------------------------------------
+    # Surfaces
+    # ------------------------------------------------------------
+    for i in range(len(surfaces) - 1):
+        surf = surfaces[i].surface
+        plotter.add_mesh(
+            surf,
+            color="lightblue",
+            opacity=0.5,
+            show_edges=False
+        )
+
+    # ------------------------------------------------------------
+    # Rays
+    # ------------------------------------------------------------
+    for i in range(Nrays):
+        r0 = ray_origins[i]
+        s  = ray_dirs[i]
+        P  = Pk_ap[i]
+
+        # distancia hasta la intersección
+        t_int = np.linalg.norm(P - r0)
+
+        # puntos del rayo
+        if max_ray_length is None:
+            ts = np.array([0.0, t_int])
+        else:
+            t_end = min(max_ray_length, t_int)
+            ts = np.linspace(0.0, t_end, int(t_end / ray_sample_step) + 2)
+
+        ray_points = r0 + ts[:, None] * s
+        ray_line = pv.Spline(ray_points)
+
+        plotter.add_mesh(ray_line, color="black", line_width=2)
+
+    # ============================================================
+    # SOURCE: puntos + triangulación
+    # ============================================================
+    if show_source:
+        # puntos source
+        pts_src = pv.PolyData(ray_origins)
+        plotter.add_mesh(
+            pts_src,
+            color="green",
+            point_size=8,
+            render_points_as_spheres=True
+        )
+
+        # triangulación source (ray tubes en la source)
+        faces_src = []
+        for (i, j, k) in triangles:
+            faces_src.extend([3, i, j, k])
+
+        tri_mesh_src = pv.PolyData(ray_origins, faces_src)
+        plotter.add_mesh(
+            tri_mesh_src,
+            color="lightgreen",
+            opacity=0.35,
+            show_edges=True,
+            edge_color="darkgreen",
+            line_width=1
+        )
+
+    # ============================================================
+    # APERTURE: puntos + triangulación
+    # ============================================================
+    if show_aperture:
+        pts_ap = pv.PolyData(Pk_ap)
+        plotter.add_mesh(
+            pts_ap,
+            color="red",
+            point_size=8,
+            render_points_as_spheres=True
+        )
+
+        faces_ap = []
+        for (i, j, k) in triangles:
+            faces_ap.extend([3, i, j, k])
+
+        tri_mesh_ap = pv.PolyData(Pk_ap, faces_ap)
+        plotter.add_mesh(
+            tri_mesh_ap,
+            color="cyan",
+            opacity=0.35,
+            show_edges=True,
+            edge_color="blue",
+            line_width=1
+        )
+
+    plotter.show()
+#===========================================================================================================
+
+# def plot_ray_tubes(ray_origins, ray_dirs, Pk_ap, triangles, surfaces, max_ray_length=None,
+#                                ray_sample_step=0.1):
+#     Nrays = ray_origins.shape[0]
+#     plotter = pv.Plotter()
+
+
+#     for i in range(len(surfaces) - 1):
+#         surf = surfaces[i].surface
+#         plotter.add_mesh(surf,
+#                          color="lightblue",
+#                          opacity=0.5,
+#                          show_edges=False)
+
+
+#     for i in range(Nrays):
+#         r0 = ray_origins[i]
+#         s  = ray_dirs[i]
+#         P  = Pk_ap[i]
+
+#         # distancia hasta la intersección
+#         t_int = np.linalg.norm(P - r0)
+
+#         # definimos puntos del rayo
+#         if max_ray_length is None:
+#             ts = np.array([0.0, t_int])
+#         else:
+#             t_end = min(max_ray_length, t_int)
+#             ts = np.linspace(0.0, t_end, int(t_end/ray_sample_step)+2)
+
+#         ray_points = r0 + ts[:, None] * s
+
+#         # Lo convertimos a una línea PolyData
+#         ray_line = pv.Spline(ray_points)
+#         plotter.add_mesh(ray_line, color="black", line_width=2)
+
+
+#     pts = pv.PolyData(Pk_ap)
+#     plotter.add_mesh(pts, color="red", point_size=8, render_points_as_spheres=True)
+
+
+#     faces = []
+#     for (i, j, k) in triangles:
+#         faces.extend([3, i, j, k])   # formato de PyVista: [3, i, j, k]
+
+#     tri_mesh = pv.PolyData(Pk_ap, faces)
+#     plotter.add_mesh(tri_mesh,
+#                      color="cyan",
+#                      opacity=0.35,
+#                      show_edges=True,
+#                      edge_color="blue",
+#                      line_width=1)
+
+
+#     plotter.show()
+
+
+
+

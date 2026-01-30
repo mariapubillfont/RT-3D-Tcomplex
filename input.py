@@ -24,6 +24,7 @@ class Ellipse:
 
 variables = {}
 with open('In_files/inputBox.txt', 'r') as file:
+# with open('In_files/input2D.txt', 'r') as file:
 # with open('In_files/horn.txt', 'r') as file:
 # with open('In_files/inPlWv.txt', 'r') as file:
 # with open('In_files/inPlWv_45.txt', 'r') as file:
@@ -51,6 +52,7 @@ D = variables['D']
 freq = variables['freq']
 typeSrc = variables['typeSrc'][0]
 theta_pw = variables['theta']
+phi_pw = variables['phi']
 Lx = variables['Lx']
 Ly = variables['Ly']
 Nx = int(variables['Nx'])
@@ -64,7 +66,7 @@ meshMaxSize = variables['meshMaxSize']
 typeSurface = variables['typeSurface']
 er = variables['er']
 tand = variables['tand']
-maxRefl = int(variables['Nrefl'])
+Ampl_treshold = variables['Ampl_treshold']
 saveExcels = variables['saveExcels']
 plotSurf = variables['plotSurf']
 plotDRT = variables['plotDRT']

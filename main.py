@@ -7,6 +7,9 @@ import plots
 import reflections as refl
 import rayTracing as rt
 import gain as gn
+import rayTubes as tubes
+import readFile as rdFl
+
 
 
 
@@ -21,25 +24,13 @@ bodies = I.bodies
 typeSurface = I.typeSurface
 ################ end input import###########
 
-
-
-
 surfaces = []
 surfaces = mesh.create_surfaces()
-if I.plotSurf == 1:
-    plots.plotSurfaces(surfaces)
-
-
-
 N_sections = I.nSurfaces 
-N_rays = I.Nrays
+Nrays = I.Nrays
 
-# Pk = np.zeros([N_sections+1, N_rays, 3])
-# idx_intersected_faces = np.zeros([N_rays, N_sections])
-# nk = np.zeros([N_sections+1, N_rays, 3])
-# sk = np.zeros([N_sections+1, N_rays, 3])
-# path_length = np.zeros((N_rays,1))
 Pk = []
+ray_ids = []
 idx_intersected_faces = []
 nk = []
 sk = []
@@ -53,126 +44,84 @@ t_tms = []
 tandels = []
 ndiel = []
 theta_ts = []
-gains = np.zeros(N_rays)
+gains = np.zeros(Nrays)
+At_te = []
+Ar_te = []
+At_tm = []
+Ar_tm = []
+extra = 1e-6
 
-extra = 1e-3
 
 if I.typeSrc == 'pw':
-    theta = np.deg2rad(I.theta_pw)
-    phi   = np.deg2rad(0) 
-    k_dir = np.array([np.sin(theta)*np.cos(phi), 
-                  np.sin(theta)*np.sin(phi), 
-                  np.cos(theta)])
-
-    sk0 = np.tile(k_dir, (N_rays, 1))
-    # sk0 = np.tile([0, 0, 1], (N_rays, 1))
     x = np.linspace(-I.Lx/2 + extra, I.Lx/2 - extra, I.Nx)
     y = np.linspace(-I.Ly/2 + extra, I.Ly/2 - extra, I.Ny) 
     X, Y = np.meshgrid(x, y)
     Z = np.zeros_like(X)
     origins = np.stack((X.ravel(), Y.ravel(), Z.ravel()), axis=1)
-    gains_norm = np.ones(N_rays)
+    theta = np.deg2rad(I.theta_pw)
+    phi   = np.deg2rad(I.phi_pw) 
+    k_dir = np.array([np.sin(theta)*np.cos(phi), 
+                  np.sin(theta)*np.sin(phi), 
+                  np.cos(theta)])
+    sk0 = np.tile(k_dir, (Nrays, 1))
+
+elif I.typeSrc == '2D':
+    x = np.linspace(-I.Lx/2 + extra, I.Lx/2 - extra, Nrays)
+    y = np.zeros(Nrays)
+    z = np.zeros(Nrays)    
+    origins = np.stack((x.ravel(), y.ravel(), z.ravel()), axis=1)
+    theta = np.linspace(-np.pi, np.pi - 2*np.pi/(Nrays-1), Nrays)
+    phi   = np.ones(Nrays)*np.deg2rad(0) 
+    x_sk = np.sin(theta)*np.cos(phi)
+    y_sk = np.sin(theta)*np.sin(phi)
+    z_sk = np.cos(theta)
+    sk0 = np.column_stack([x_sk, y_sk, z_sk])
 
 else:
-    sk0 = rt.fibonacci_sphere(N_rays)
-    # angulos = np.linspace(0,  2*np.pi, N_rays, endpoint=False)
-    # y = np.cos(angulos)
-    # x = np.zeros_like(y)
-    # z = np.sin(angulos)
-    # sk0 = np.column_stack((x, y, z))
-    gains_norm = gn.getGain(sk0)[2]
-    origins = np.zeros([N_rays, 3])
+    ##### if same directions (debbug)
+    # x = np.linspace(-I.Lx/2 + extra, I.Lx/2 - extra, I.Nx)
+    # y = np.linspace(-I.Ly/2 + extra, I.Ly/2 - extra, I.Ny) 
+    # X, Y = np.meshgrid(x, y)
+    # Z = np.zeros_like(X)
+    # origins = np.stack((X.ravel(), Y.ravel(), Z.ravel()), axis=1)
+    # theta = np.deg2rad(0)
+    # phi   = np.deg2rad(0) 
+    # k_dir = np.array([np.sin(theta)*np.cos(phi), 
+    #               np.sin(theta)*np.sin(phi), 
+    #               np.cos(theta)])
+
+    # sk0 = np.tile(k_dir, (N_rays, 1))
+
+    origins = mesh.fibonacci_sphere_points(Nrays, I.Lx)
+    sk0 = mesh.fibonacci_sphere_points(Nrays, 1)
+
+if I.plotSurf: plots.plotSurfaces(surfaces, origins, sk0)
 
 
-Pk, nk, sk, r_tes, t_tes, r_tms, t_tms, tandels, ndiel, ray_lengths, theta_ts  = rt.DRT(origins, Nx, Ny, sk0, surfaces )
+ray_ids, Pk, nk, sk, r_tes, t_tes, r_tms, t_tms, tandels, ndiel, ray_lengths, theta_ts, At_te, Ar_te, At_tm, Ar_tm  = rt.DRT(origins, Nx, Ny, sk0, surfaces )
 
 if I.plotDRT: plots.plotDRT(surfaces, Pk, sk)
 if I.plotNormals: plots.plot_normals(surfaces, nk, Pk)
-p_abs = refl.getAbsorption(r_tes, t_tes, tandels, ndiel, ray_lengths, sk, nk, theta_ts, gains_norm)
-p_abs = refl.getAbsorption2(r_tes, t_tes, r_tms, t_tms, tandels, ndiel, ray_lengths, sk, nk, theta_ts, gains_norm)
+
+
+# [Ak, Ak_src, dLk_src, dLk_ap, Ex_src, Ey_src, Ez_src] = tubes.getAmplitude2D(sk, nk, Pk)
+[triangles, C_ap, A_ap, A_src, dS_src, dS_ap, cos_th, Ex_src, Ey_src, Ez_src] = tubes.get_rayTubes(Pk, sk, theta_ts, nk, surfaces)
+
+# [A0_ray, counts] = tubes.ray_amplitudes_from_tube_amplitudes(triangles, A_ap)
+
+[Ei_te, Ei_tm] = refl.field_decomposition(sk, nk, Ex_src, Ey_src, Ez_src)
+
+# [A_src, Pt_src] = tubes.getA_source(sk0)
+#[p_trans_te, p_refl_te, p_abs_te, p_trans_tm, p_refl_tm, p_abs_tm] = 
+# refl.get_Pabs2D(At_te, Ar_te, At_tm, Ar_tm, Ak, Ak_src, Ei_te, Ei_tm, nk, sk, dLk_src, dLk_ap)
+refl.get_Pabs(At_te, Ar_te, At_tm, Ar_tm, A_ap, A_src, Ei_te, Ei_tm, nk, sk, dS_src, dS_ap)
+
+# p_abs = refl.getAbsorption(r_tes, t_tes, tandels, ndiel, ray_lengths, sk, nk, theta_ts)
+# p_abs = refl.getAbsorption2(r_tes, t_tes, r_tms, t_tms, tandels, ndiel, ray_lengths, sk, nk, theta_ts)
 # ray_length = 0.5  # longitud de los rayos
 
 # origin = np.array([0, 0, 0])
 
-
-
-
-# plotter = pv.Plotter()
-
-# # Plot surfaces
-# for surf in surfaces:
-#     plotter.add_mesh(surf.surface, color='lightgray', opacity=0.5, show_edges=True)
-
-# N_used_rays = None
-# direction = 'DRT'
-# show_dirs = True
-# dir_scale = 0.01
-# # Determine how many rays to use
-# if N_used_rays is None:
-#     N_used_rays = Pk.shape[1]
-
-# # Plot each ray
-# for i in range(N_used_rays):
-#     # Extract the polyline of the ray (from surface 0 to N_sections)
-#     ray_path = Pk[:N_sections+1, i, :]
-#     n_points = ray_path.shape[0]
-#     connectivity = np.hstack([[n_points], np.arange(n_points)])
-#     ray_line = pv.PolyData()
-#     ray_line.points = ray_path
-#     ray_line.lines = connectivity
-#     plotter.add_mesh(ray_line, color='red', line_width=2)
-#     # if show_dirs and sk is not None:
-#     #     for k in range(N_sections):
-#     #         # Arrow base = position
-#     #         p_start = Pk[k, i, :]
-#     #         direction_vec = sk[k, i, :]
-#     #         arrow = pv.Arrow(start=p_start, direction=direction_vec, scale=dir_scale)
-#     #         plotter.add_mesh(arrow, color='blue')
-
-# plotter.add_title(f"{direction} Ray Paths", font_size=14)
-# plotter.show()
-
-
-# ray_length = 0.2
-
-# plotter = pv.Plotter()
-# for s in sk0:
-#     end = origin + s * ray_length
-#     plotter.add_mesh(pv.Line(origin, end), color='black')
-
-# plotter.add_mesh(pv.Sphere(radius=0.005, center=origin), color='black')
-# plotter.add_mesh(surfaces[0].surface, opacity=0.9, color = True)
-# # plotter.show_grid()
-# plotter.show()
-
-# 3. Crear las líneas de los rayos
-# lines = []
-# for dir_vec in sk0:
-#     end_point = origins[0] + dir_vec * ray_length
-#     line = pv.Line(origins[0], end_point)
-#     lines.append(line)
-
-# 4. Unir todo en una sola malla
-# rays = lines[0]
-# for line in lines[1:]:
-#     rays = rays.merge(line)
-
-# # 5. Visualizar
-# plotter = pv.Plotter()
-
-
-
-# for i in range(0, len(surfaces)):
-#     si = surfaces[i]
-#     plotter.add_mesh(si.surface, opacity=1, color = True)
-
-
-# plotter.add_mesh(rays, color="red", line_width=2)
-# plotter.add_mesh(pv.Sphere(radius=0.01, center=origins[0]), color="blue", name="origin")
-# plotter.show_grid()
-# plotter.show()
-
-# Pk, idx_intersected_faces, path_length, nk, sk, T_tot, e = rt.DRT()
 
 
 
